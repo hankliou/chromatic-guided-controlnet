@@ -1,0 +1,17 @@
+# all file types
+*.ckpt
+*.pyc
+
+# whole directory
+__pycache__/
+ligntning_logs/
+
+# file types under directory
+datasets/
+checkpoints/
+
+inference/output/
+inference/lightning_logs/
+
+train/image_log/
+train/lightning_logs/
