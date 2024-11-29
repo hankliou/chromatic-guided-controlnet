@@ -14,9 +14,9 @@ from cldm.model import create_model, load_state_dict
 # debugpy.wait_for_client()
 
 # Configs
-resume_path = './models/v2-1_768-ema-pruned_ini_none.ckpt'
-# resume_path = '../checkpoints/new_exp_sd21_epoch=212_step=110951.ckpt'
-batch_size = 4
+# resume_path = './models/v2-1_768-ema-pruned_ini_none.ckpt'
+resume_path = '../checkpoints/new_exp_sd21_epoch=21_step=046265.ckpt'
+batch_size = 1
 logger_freq = 300
 learning_rate = 1e-4
 sd_locked = True
@@ -40,7 +40,7 @@ if not os.path.exists(directory):
 
 checkpoint_callback = ModelCheckpoint(dirpath = directory,
                                       save_top_k = -1,
-                                      every_n_train_steps=math.ceil(16000/batch_size), save_last=True,
+                                      every_n_train_steps=math.ceil(2103/batch_size), save_last=True,
                                       save_weights_only=False,
                                       filename='new_exp_sd21_{epoch:02d}_{step:06d}')
 # ================================================================================================

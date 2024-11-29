@@ -91,7 +91,7 @@ def realblur_loader():
     
 # GOPRO
 def gopro_loader():
-    sample_path = "./output/GOPRO_resize_learningrate_1e-4/test/"
+    sample_path = "./output/GOPRO_Large_gen_by_BSD_bothside_atten/test/"
     gt_path_replace = "../datasets/GOPRO_Large/test/"
     json_path = '../datasets/GOPRO_Large/test/prompt.json'
 
@@ -118,8 +118,8 @@ sample, gt = [], []
 txt_psnr, txt_ssim = '', ''
 
 # get value
-bsd_loader() # for bsd centroid only
-# gopro_loader() # for gopro only
+# bsd_loader() # for bsd centroid only
+gopro_loader() # for gopro only
 # realblur_loader() # for realblur only
 
 # open file

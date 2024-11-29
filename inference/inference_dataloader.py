@@ -65,9 +65,9 @@ class MyDataset(Dataset):
         prompt = cv2.imread(prompt_filename)
 
         # resize
-        source = cv2.resize(source, (512, 512))
-        target = cv2.resize(target, (512, 512))
-        prompt = cv2.resize(prompt, (512, 512))
+        # source = cv2.resize(source, (512, 512))
+        # target = cv2.resize(target, (512, 512))
+        # prompt = cv2.resize(prompt, (512, 512))
 
         # Do not forget that OpenCV read images in BGR order.
         source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)

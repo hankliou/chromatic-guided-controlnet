@@ -18,8 +18,8 @@ from cldm.model import create_model, load_state_dict
 # debugpy.wait_for_client()
 
 # Configs
-checkpoint_path = "../checkpoints/checkpoints_both_side_attention_BSD_resize/new_exp_sd21_epoch=103_step=103999.ckpt"
-batch_size = 16
+checkpoint_path = "../checkpoints/BSD_bothside_attent_resize_1e-4/new_exp_sd21_epoch=103_step=103999.ckpt"
+batch_size = 4
 
 model = create_model("./models/cldm_v21.yaml").cpu()
 model.load_state_dict(load_state_dict(checkpoint_path, location="cpu"))
