@@ -14,8 +14,8 @@ from cldm.model import create_model, load_state_dict
 # debugpy.wait_for_client()
 
 # Configs
-# resume_path = './models/v2-1_768-ema-pruned_ini_none.ckpt'
-resume_path = '../checkpoints/new_exp_sd21_epoch=21_step=046265.ckpt'
+resume_path = './models/v2-1_768-ema-pruned_ini_none.ckpt'
+# resume_path = '../checkpoints/new_exp_sd21_epoch=77_step=164033.ckpt'
 batch_size = 1
 logger_freq = 300
 learning_rate = 1e-4

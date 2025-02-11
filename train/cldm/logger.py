@@ -73,4 +73,6 @@ class ImageLogger(Callback):
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
         if not self.disabled:
+            if isinstance(batch, list):
+                batch = batch[0]
             self.log_img(pl_module, batch, batch_idx, split="train")

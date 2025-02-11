@@ -1,5 +1,6 @@
-from PIL import Image
 import numpy as np
+import torch
+import lpips
 import math
 import json
 import cv2
@@ -31,25 +32,22 @@ def ssim(img1, img2):
     )
     return ssim_map.mean()
 
-def calculate_ssim(img1, img2):
-    """calculate SSIM
-    the same outputs as MATLAB's
-    img1, img2: [0, 255]
-    """
-    if not img1.shape == img2.shape:
-        raise ValueError("Input images must have the same dimensions.")
-    if img1.ndim == 2:
-        return ssim(img1, img2)
-    elif img1.ndim == 3:
-        if img1.shape[2] == 3:
-            ssims = []
-            for i in range(3):
-                ssims.append(ssim(img1, img2))
-            return np.array(ssims).mean()
-        elif img1.shape[2] == 1:
-            return ssim(np.squeeze(img1), np.squeeze(img2))
-    else:
-        raise ValueError("Wrong input image dimensions.")
+def calculate_lpips(img1, img2):
+    # 加载预训练的LPIPS模型
+    lpips_model = lpips.LPIPS(net="alex")
+
+    # 将图像转换为PyTorch的Tensor格式
+    image1_tensor = torch.tensor(img1).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+    image2_tensor = torch.tensor(img2).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+
+    # 使用LPIPS模型计算距离
+    return lpips_model(image1_tensor, image2_tensor).item()
+
+def gen_txt_filename(name):
+    global txt_psnr, txt_ssim, txt_lpips
+    txt_psnr = f"psnr_{name}.txt"
+    txt_ssim = f"ssim_{name}.txt"
+    txt_lpips = f"lpips_{name}.txt"
 
 # BSD
 def bsd_loader():
@@ -57,9 +55,7 @@ def bsd_loader():
     gt_path_replace = "../datasets/BSD_B_Centroid/testing/target"
     json_path = '../datasets/BSD_B_Centroid/testing/prompt.json'
 
-    global txt_psnr, txt_ssim
-    txt_psnr = f"psnr_{sample_path.split('/')[2]}.txt"
-    txt_ssim = f"ssim_{sample_path.split('/')[2]}.txt"
+    gen_txt_filename(sample_path.split('/')[2])
 
     with open(json_path, 'rt') as js:
         for line in js:
@@ -73,13 +69,11 @@ def bsd_loader():
 
 # Realblur
 def realblur_loader():
-    sample_path = "./output/RealBlur-J_epoch_60/"
+    sample_path = "./output/RealBlur-J_by_BSD_bothside_atten_1e-4_epoch103/"
     gt_path_replace = "RealBlur-J_ECC_IMCORR_centroid_itensity_ref/"
     json_path = '../datasets/RealBlur/RealBlur_J_test_list.json'
 
-    global txt_psnr, txt_ssim
-    txt_psnr = f"psnr_{sample_path.split('/')[2]}.txt"
-    txt_ssim = f"ssim_{sample_path.split('/')[2]}.txt"
+    gen_txt_filename(sample_path.split('/')[2])
 
     with open(json_path, 'rt') as js:
         for line in js:
@@ -91,13 +85,11 @@ def realblur_loader():
     
 # GOPRO
 def gopro_loader():
-    sample_path = "./output/GOPRO_Large_gen_by_BSD_bothside_atten/test/"
+    sample_path = "./output/GOPRO_Large_bothside_atten_fullsize_epoch65/test/"
     gt_path_replace = "../datasets/GOPRO_Large/test/"
     json_path = '../datasets/GOPRO_Large/test/prompt.json'
 
-    global txt_psnr, txt_ssim
-    txt_psnr = f"psnr_{sample_path.split('/')[2]}.txt"
-    txt_ssim = f"ssim_{sample_path.split('/')[2]}.txt"
+    gen_txt_filename(sample_path.split('/')[2])
 
     with open(json_path, 'rt') as js:
         for line in js:
@@ -110,12 +102,15 @@ def gopro_loader():
     return sample, gt
 
 # init
-average_psnr = 0
-average_ssim = 0
-cnt = 0
-cnt_ssim = 0
+average_psnr, average_ssim, average_lpips = 0, 0, 0
+txt_psnr, txt_ssim, txt_lpips = '', '', ''
 sample, gt = [], []
-txt_psnr, txt_ssim = '', ''
+cnt = 0
+flags = {
+    'psnr' : False,
+    'ssim' : False,
+    'lpips' : True
+}
 
 # get value
 # bsd_loader() # for bsd centroid only
@@ -124,13 +119,15 @@ gopro_loader() # for gopro only
 
 # open file
 print(txt_psnr, txt_ssim)
-txt_psnr = open(txt_psnr, 'w')
-txt_ssim = open(txt_ssim, 'w')
-    
+txt_psnr = open(txt_psnr, 'w') if flags['psnr'] else None
+txt_ssim = open(txt_ssim, 'w') if flags['ssim'] else None
+txt_lpips = open(txt_lpips, 'w') if flags['lpips'] else None
+
 for fname1, fname2 in zip(sample, gt):
-    # print(fname1, fname2)
-    img1 = cv2.imread(fname1, 0)
-    img2 = cv2.imread(fname2, 0)
+    
+    img1 = cv2.imread(fname1)
+    img2 = cv2.imread(fname2)
+    print(cnt, fname1, fname2)
     
     # if size different, resize
     if img1.shape != img2.shape:
@@ -139,25 +136,36 @@ for fname1, fname2 in zip(sample, gt):
     i1_array = np.array(img1)
     i2_array = np.array(img2)
 
-    r12 = psnr(i1_array, i2_array)
-    txt_psnr.write(fname1 + " " + str(r12) + "\n")
-    average_psnr += r12
+    if flags['psnr']:
+        r12 = psnr(i1_array, i2_array)
+        txt_psnr.write(fname1 + " " + str(r12) + "\n")
+        average_psnr += r12
     
-    r12 = ssim(i1_array, i2_array)
-    txt_ssim.write(fname1 + " " + str(r12) + "\n")
-    average_ssim += r12
-    
+    if flags['ssim']:
+        r12 = ssim(i1_array, i2_array)
+        txt_ssim.write(fname1 + " " + str(r12) + "\n")
+        average_ssim += r12
+
+    if flags['lpips']:
+        r12 = calculate_lpips(i1_array, i2_array)
+        txt_lpips.write(fname1 + " " + str(r12) + "\n")
+        average_lpips += r12
+        print(r12)
+        
     cnt += 1
     
-    # if r12 < 27.5:
-    #     cv2.imwrite(f'{bad_pic}{fname1}', img1)
-    #     cv2.imwrite(f'{bad_pic}{fname2}', img2)
-    # print(fname1, fname2, r12)
-    
-txt_psnr.write(f'avg psnr: {average_psnr / cnt}')
-txt_psnr.close()
+print('finish!')
 
-txt_ssim.write(f'avg psnr: {average_ssim / cnt}')
-txt_psnr.close()
+if flags['psnr']:
+    txt_psnr.write(f'avg psnr: {average_psnr / cnt}')
+    txt_psnr.close()
 
-print(f'psnr: {average_psnr / cnt}, ssim: {average_ssim / cnt}')
+if flags['ssim']:
+    txt_ssim.write(f'avg ssim: {average_ssim / cnt}')
+    txt_ssim.close()
+
+if flags['lpips']:
+    txt_lpips.write(f'avg lpips: {average_lpips / cnt}')
+    txt_lpips.close()
+
+print(f'psnr: {average_psnr / cnt}, ssim: {average_ssim / cnt}, lpips: {average_lpips / cnt}')

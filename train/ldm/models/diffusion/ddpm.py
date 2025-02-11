@@ -27,6 +27,8 @@ from ldm.models.autoencoder import IdentityFirstStage, AutoencoderKL
 from ldm.modules.diffusionmodules.util import make_beta_schedule, extract_into_tensor, noise_like
 from ldm.models.diffusion.ddim import DDIMSampler
 
+import cv2
+
 
 __conditioning_keys__ = {'concat': 'c_concat',
                          'crossattn': 'c_crossattn',
@@ -42,6 +44,25 @@ def disabled_train(self, mode=True):
 def uniform_on_device(r1, r2, shape, device):
     return (r1 - r2) * torch.rand(*shape, device=device) + r2
 
+def ssim(img1, img2):
+    C1 = (0.01 * 255) ** 2
+    C2 = (0.03 * 255) ** 2
+    img1 = img1.astype(np.float64)
+    img2 = img2.astype(np.float64)
+    kernel = cv2.getGaussianKernel(11, 1.5)
+    window = np.outer(kernel, kernel.transpose())
+    mu1 = cv2.filter2D(img1, -1, window)[5:-5, 5:-5]  # valid
+    mu2 = cv2.filter2D(img2, -1, window)[5:-5, 5:-5]
+    mu1_sq = mu1**2
+    mu2_sq = mu2**2
+    mu1_mu2 = mu1 * mu2
+    sigma1_sq = cv2.filter2D(img1**2, -1, window)[5:-5, 5:-5] - mu1_sq
+    sigma2_sq = cv2.filter2D(img2**2, -1, window)[5:-5, 5:-5] - mu2_sq
+    sigma12 = cv2.filter2D(img1 * img2, -1, window)[5:-5, 5:-5] - mu1_mu2
+    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / (
+        (mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2)
+    )
+    return ssim_map.mean()
 
 class DDPM(pl.LightningModule):
     # classic DDPM with Gaussian diffusion, in image space
@@ -400,11 +421,14 @@ class DDPM(pl.LightningModule):
 
         loss_dict.update({f'{log_prefix}/loss_simple': loss.mean()})
         loss_simple = loss.mean() * self.l_simple_weight
+        loss_ssim = 1 - ssim(model_out, target) # modify, add ssim loss
 
         loss_vlb = (self.lvlb_weights[t] * loss).mean()
         loss_dict.update({f'{log_prefix}/loss_vlb': loss_vlb})
 
         loss = loss_simple + self.original_elbo_weight * loss_vlb
+        alpha = 0.5 # modify, add ssim loss
+        loss = loss*alpha + loss_ssim*(1-alpha) # modify, add ssim loss
 
         loss_dict.update({f'{log_prefix}/loss': loss})
 
@@ -416,6 +440,7 @@ class DDPM(pl.LightningModule):
         t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()
         return self.p_losses(x, t, *args, **kwargs)
 
+    # modify, re-write get_input since input become list of dict, not pure dict
     def get_input(self, batch, k):
         x = batch[k]
         if len(x.shape) == 3:
@@ -423,35 +448,74 @@ class DDPM(pl.LightningModule):
         x = rearrange(x, 'b h w c -> b c h w')
         x = x.to(memory_format=torch.contiguous_format).float()
         return x
+    # def get_input(self, batchs, k):
+    #     xs = []
+    #     for batch in batchs:
+    #         x = batch[k]
+    #         if len(x.shape) == 3:
+    #             x = x[..., None]
+    #         x = rearrange(x, 'b h w c -> b c h w')
+    #         x = x.to(memory_format=torch.contiguous_format).float()
+    #         xs.append(x)
+    #     return xs
 
     def shared_step(self, batch):
         x = self.get_input(batch, self.first_stage_key)
         loss, loss_dict = self(x)
         return loss, loss_dict
 
-    def training_step(self, batch, batch_idx):
-        for k in self.ucg_training:
-            p = self.ucg_training[k]["p"]
-            val = self.ucg_training[k]["val"]
-            if val is None:
-                val = ""
-            for i in range(len(batch[k])):
-                if self.ucg_prng.choice(2, p=[1 - p, p]):
-                    batch[k][i] = val
+    # modify, re-write for random crop
+    # def training_step(self, batch, batch_idx):
+    #     for k in self.ucg_training:
+    #         p = self.ucg_training[k]["p"]
+    #         val = self.ucg_training[k]["val"]
+    #         if val is None:
+    #             val = ""
+    #         for i in range(len(batch[k])):
+    #             if self.ucg_prng.choice(2, p=[1 - p, p]):
+    #                 batch[k][i] = val
 
-        loss, loss_dict = self.shared_step(batch)
+    #     loss, loss_dict = self.shared_step(batch)
 
-        self.log_dict(loss_dict, prog_bar=True,
-                      logger=True, on_step=True, on_epoch=True)
+    #     self.log_dict(loss_dict, prog_bar=True,
+    #                   logger=True, on_step=True, on_epoch=True)
 
-        self.log("global_step", self.global_step,
-                 prog_bar=True, logger=True, on_step=True, on_epoch=False)
+    #     self.log("global_step", self.global_step,
+    #              prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
-        if self.use_scheduler:
-            lr = self.optimizers().param_groups[0]['lr']
-            self.log('lr_abs', lr, prog_bar=True, logger=True, on_step=True, on_epoch=False)
+    #     if self.use_scheduler:
+    #         lr = self.optimizers().param_groups[0]['lr']
+    #         self.log('lr_abs', lr, prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
-        return loss
+    #     return loss
+    
+    def training_step(self, batchs, batch_idx):
+        loss_sum = 0
+        crop_quan = len(batchs)
+        for batch in batchs:
+            for k in self.ucg_training:
+                p = self.ucg_training[k]["p"]
+                val = self.ucg_training[k]["val"]
+                if val is None:
+                    val = ""
+                for i in range(len(batch[k])):
+                    if self.ucg_prng.choice(2, p=[1 - p, p]):
+                        batch[k][i] = val
+
+            loss, loss_dict = self.shared_step(batch)
+            loss_sum += loss
+
+            self.log_dict(loss_dict, prog_bar=True,
+                        logger=True, on_step=True, on_epoch=True)
+
+            self.log("global_step", self.global_step,
+                    prog_bar=True, logger=True, on_step=True, on_epoch=False)
+
+            if self.use_scheduler:
+                lr = self.optimizers().param_groups[0]['lr']
+                self.log('lr_abs', lr, prog_bar=True, logger=True, on_step=True, on_epoch=False)
+
+        return loss_sum / crop_quan
 
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):

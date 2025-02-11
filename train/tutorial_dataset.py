@@ -140,18 +140,28 @@ class MyDataset(Dataset):
         prompt = cv2.imread(prompt_filename) # color block function
         
         # resize (don't resize if random crop)
-        source = cv2.resize(source, (1280, 768))
-        target = cv2.resize(target, (1280, 768))
-        prompt = cv2.resize(prompt, (1280, 768))
+        # source = cv2.resize(source, (512, 512))
+        # target = cv2.resize(target, (512, 512))
+        # prompt = cv2.resize(prompt, (512, 512))
         
         # Do not forget that OpenCV read images in BGR order.
         source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
         target = cv2.cvtColor(target, cv2.COLOR_BGR2RGB)
         prompt = cv2.cvtColor(prompt, cv2.COLOR_BGR2RGB)
         
-        # Random crop
-        # random_crop_size = 128
-        # source, target, prompt = self.random_crop(source, target, prompt, random_crop_size)
+        # Random crop --------------------
+        ret = []
+        crop_size = 512
+        crop_quan = 2
+        for _ in range(crop_quan):
+            source, target, prompt = self.random_crop(source, target, prompt, crop_size)
+            # Normalization
+            source = source.astype(np.float32) / 255.0          # Normalize source images to [0, 1].        
+            target = (target.astype(np.float32) / 127.5) - 1.0  # Normalize target images to [-1, 1].
+            prompt = prompt.astype(np.float32) / 255.0          # Normalize source images to [0, 1].
+            ret.append(dict(jpg=target, hint=source, color_block=prompt))
+        return ret
+        # --------------------------------
         
         # Normalization
         source = source.astype(np.float32) / 255.0          # Normalize source images to [0, 1].        
