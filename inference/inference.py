@@ -18,7 +18,7 @@ from cldm.model import create_model, load_state_dict
 # debugpy.wait_for_client()
 
 # Configs
-checkpoint_path = "../checkpoints/BSD_bothside_attent_resize_1e-4/new_exp_sd21_epoch=103_step=103999.ckpt"
+checkpoint_path = "../checkpoints/GOPRO_Large_augmented_512*512/new_exp_sd21_epoch=193_step=059169.ckpt"
 batch_size = 4
 
 model = create_model("./models/cldm_v21.yaml").cpu()
@@ -42,6 +42,7 @@ ddim_steps = 50
 strength = 1.0
 guess_mode = False
 count = 0
+cnt=0
 for x in dataloader:
     
     print('x: ', x.keys())
@@ -60,7 +61,8 @@ for x in dataloader:
         color_block = c["c_crossattn"][0][:batch_size]  #
         cond = {"c_concat": [control], "color_block": [color_block]}
         uc_full = {"c_concat": [control], "color_block": [color_block]}
-        shape = (4, 512 // 8, 512 // 8)
+        # shape = (4, 512 // 8, 512 // 8)
+        shape = (4, x['color_block'].shape[1] // 8, x['color_block'].shape[2] // 8) # modify, use color_block's H * W as shape
 
         # if config.save_memory:
         #     model.low_vram_shift(is_diffusing=True)
@@ -103,8 +105,9 @@ for x in dataloader:
             dir = '/'.join((path + f"/{x['file_name'][id]}").split('/')[:-1])
             if not os.path.isdir(dir):
                 os.makedirs(dir)
-            Image.fromarray(result).save(path + f"/{x['file_name'][id]}")
-            print(path + f"/{x['file_name'][id]}")
+            Image.fromarray(result).save(path + f"/{x['file_name'][id]}-{cnt}.png")
+            print(path + f"/{x['file_name'][id]}-{cnt}")
+            cnt+=1
             count += 1
 
 print(f'count: {count}')

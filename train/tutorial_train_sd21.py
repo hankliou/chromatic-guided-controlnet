@@ -7,7 +7,7 @@ from tutorial_dataset import MyDataset
 from cldm.logger import ImageLogger
 from cldm.model import create_model, load_state_dict
 
-# # dubug usage
+# dubug usage
 # import debugpy
 # debugpy.listen(("0.0.0.0", 7860))
 # print("Waiting for client to attach...")
@@ -15,8 +15,8 @@ from cldm.model import create_model, load_state_dict
 
 # Configs
 resume_path = './models/v2-1_768-ema-pruned_ini_none.ckpt'
-# resume_path = '../checkpoints/new_exp_sd21_epoch=77_step=164033.ckpt'
-batch_size = 1
+# resume_path = '../checkpoints/new_exp_sd21_epoch=121_step=037209.ckpt'
+batch_size = 4
 logger_freq = 300
 learning_rate = 1e-4
 sd_locked = True
@@ -26,6 +26,12 @@ only_mid_control = False
 # First use cpu to load models. Pytorch Lightning will automatically move it to GPUs.
 model = create_model('./models/cldm_v21.yaml').cpu()
 model.load_state_dict(load_state_dict(resume_path, location='cpu'))
+# 計算模型參數量---
+total_params = sum(p.numel() for p in model.parameters())
+trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f"Total parameters: {total_params:,}")
+print(f"Trainable parameters: {trainable_params:,}")
+# ---
 model.learning_rate = learning_rate
 model.sd_locked = sd_locked
 model.only_mid_control = only_mid_control
@@ -40,7 +46,7 @@ if not os.path.exists(directory):
 
 checkpoint_callback = ModelCheckpoint(dirpath = directory,
                                       save_top_k = -1,
-                                      every_n_train_steps=math.ceil(2103/batch_size), save_last=True,
+                                      every_n_train_steps=math.ceil(16000/batch_size), save_last=True,
                                       save_weights_only=False,
                                       filename='new_exp_sd21_{epoch:02d}_{step:06d}')
 # ================================================================================================

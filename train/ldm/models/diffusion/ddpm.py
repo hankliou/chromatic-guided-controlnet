@@ -29,6 +29,11 @@ from ldm.models.diffusion.ddim import DDIMSampler
 
 import cv2
 
+import torch.autograd as autograd
+import torchvision.models as models
+import torchvision.transforms as transforms
+from torch.autograd import Variable
+from .util.image_pool import ImagePool
 
 __conditioning_keys__ = {'concat': 'c_concat',
                          'crossattn': 'c_crossattn',
@@ -70,7 +75,7 @@ class DDPM(pl.LightningModule):
                  unet_config,
                  timesteps=1000,
                  beta_schedule="linear",
-                 loss_type="l2",
+                 loss_type="l1", # modify, l2 -> l1
                  ckpt_path=None,
                  ignore_keys=[],
                  load_only_unet=False,
@@ -155,6 +160,11 @@ class DDPM(pl.LightningModule):
         self.ucg_training = ucg_training or dict()
         if self.ucg_training:
             self.ucg_prng = np.random.RandomState()
+            
+        # percepual loss usage
+        self.content_loss = PerceptualLoss()
+        self.content_loss.initialize(nn.MSELoss())
+        
 
     def register_schedule(self, given_betas=None, beta_schedule="linear", timesteps=1000,
                           linear_start=1e-4, linear_end=2e-2, cosine_s=8e-3):
@@ -422,13 +432,14 @@ class DDPM(pl.LightningModule):
         loss_dict.update({f'{log_prefix}/loss_simple': loss.mean()})
         loss_simple = loss.mean() * self.l_simple_weight
         loss_ssim = 1 - ssim(model_out, target) # modify, add ssim loss
+        loss_perceptual = 0 #self.content_loss(model_out, target) # modify, add perceptual loss
 
         loss_vlb = (self.lvlb_weights[t] * loss).mean()
         loss_dict.update({f'{log_prefix}/loss_vlb': loss_vlb})
 
         loss = loss_simple + self.original_elbo_weight * loss_vlb
-        alpha = 0.5 # modify, add ssim loss
-        loss = loss*alpha + loss_ssim*(1-alpha) # modify, add ssim loss
+        alpha1, alpha2 = 0.5, 0 # modify, add ssim loss & perceptual loss
+        loss = loss * (1 - alpha1 - alpha2) + loss_ssim * alpha1 + loss_perceptual * alpha2 # modify, add ssim loss
 
         loss_dict.update({f'{log_prefix}/loss': loss})
 
@@ -465,57 +476,57 @@ class DDPM(pl.LightningModule):
         return loss, loss_dict
 
     # modify, re-write for random crop
-    # def training_step(self, batch, batch_idx):
-    #     for k in self.ucg_training:
-    #         p = self.ucg_training[k]["p"]
-    #         val = self.ucg_training[k]["val"]
-    #         if val is None:
-    #             val = ""
-    #         for i in range(len(batch[k])):
-    #             if self.ucg_prng.choice(2, p=[1 - p, p]):
-    #                 batch[k][i] = val
+    def training_step(self, batch, batch_idx):
+        for k in self.ucg_training:
+            p = self.ucg_training[k]["p"]
+            val = self.ucg_training[k]["val"]
+            if val is None:
+                val = ""
+            for i in range(len(batch[k])):
+                if self.ucg_prng.choice(2, p=[1 - p, p]):
+                    batch[k][i] = val
 
-    #     loss, loss_dict = self.shared_step(batch)
+        loss, loss_dict = self.shared_step(batch)
 
-    #     self.log_dict(loss_dict, prog_bar=True,
-    #                   logger=True, on_step=True, on_epoch=True)
+        self.log_dict(loss_dict, prog_bar=True,
+                      logger=True, on_step=True, on_epoch=True)
 
-    #     self.log("global_step", self.global_step,
-    #              prog_bar=True, logger=True, on_step=True, on_epoch=False)
+        self.log("global_step", self.global_step,
+                 prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
-    #     if self.use_scheduler:
-    #         lr = self.optimizers().param_groups[0]['lr']
-    #         self.log('lr_abs', lr, prog_bar=True, logger=True, on_step=True, on_epoch=False)
+        if self.use_scheduler:
+            lr = self.optimizers().param_groups[0]['lr']
+            self.log('lr_abs', lr, prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
-    #     return loss
+        return loss
     
-    def training_step(self, batchs, batch_idx):
-        loss_sum = 0
-        crop_quan = len(batchs)
-        for batch in batchs:
-            for k in self.ucg_training:
-                p = self.ucg_training[k]["p"]
-                val = self.ucg_training[k]["val"]
-                if val is None:
-                    val = ""
-                for i in range(len(batch[k])):
-                    if self.ucg_prng.choice(2, p=[1 - p, p]):
-                        batch[k][i] = val
+    # def training_step(self, batchs, batch_idx):
+    #     loss_sum = 0
+    #     crop_quan = len(batchs)
+    #     for batch in batchs:
+    #         for k in self.ucg_training:
+    #             p = self.ucg_training[k]["p"]
+    #             val = self.ucg_training[k]["val"]
+    #             if val is None:
+    #                 val = ""
+    #             for i in range(len(batch[k])):
+    #                 if self.ucg_prng.choice(2, p=[1 - p, p]):
+    #                     batch[k][i] = val
 
-            loss, loss_dict = self.shared_step(batch)
-            loss_sum += loss
+    #         loss, loss_dict = self.shared_step(batch)
+    #         loss_sum += loss
 
-            self.log_dict(loss_dict, prog_bar=True,
-                        logger=True, on_step=True, on_epoch=True)
+    #         self.log_dict(loss_dict, prog_bar=True,
+    #                     logger=True, on_step=True, on_epoch=True)
 
-            self.log("global_step", self.global_step,
-                    prog_bar=True, logger=True, on_step=True, on_epoch=False)
+    #         self.log("global_step", self.global_step,
+    #                 prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
-            if self.use_scheduler:
-                lr = self.optimizers().param_groups[0]['lr']
-                self.log('lr_abs', lr, prog_bar=True, logger=True, on_step=True, on_epoch=False)
+    #         if self.use_scheduler:
+    #             lr = self.optimizers().param_groups[0]['lr']
+    #             self.log('lr_abs', lr, prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
-        return loss_sum / crop_quan
+    #     return loss_sum / crop_quan
 
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):
@@ -1865,3 +1876,38 @@ class LatentUpscaleFinetuneDiffusion(LatentFinetuneDiffusion):
         log = super().log_images(*args, **kwargs)
         log["lr"] = rearrange(args[0]["lr"], 'b h w c -> b c h w')
         return log
+
+class PerceptualLoss():
+
+    def contentFunc(self):
+        conv_3_3_layer = 14
+        cnn = models.vgg19(pretrained=True).features
+        cnn = cnn.cuda()
+        model = nn.Sequential()
+        model = model.cuda()
+        model = model.eval()
+        for i, layer in enumerate(list(cnn)):
+            model.add_module(str(i), layer)
+            if i == conv_3_3_layer:
+                break
+        return model
+
+    def initialize(self, loss):
+        with torch.no_grad():
+            self.criterion = loss
+            self.contentFunc = self.contentFunc()
+            self.transform = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+    def get_loss(self, fakeIm, realIm):
+        fakeIm = (fakeIm + 1) / 2.0
+        realIm = (realIm + 1) / 2.0
+        fakeIm[0, :, :, :] = self.transform(fakeIm[0, :, :, :])
+        realIm[0, :, :, :] = self.transform(realIm[0, :, :, :])
+        f_fake = self.contentFunc.forward(fakeIm)
+        f_real = self.contentFunc.forward(realIm)
+        f_real_no_grad = f_real.detach()
+        loss = self.criterion(f_fake, f_real_no_grad)
+        return 0.006 * torch.mean(loss) + 0.5 * nn.MSELoss()(fakeIm, realIm)
+
+    def __call__(self, fakeIm, realIm):
+        return self.get_loss(fakeIm, realIm)

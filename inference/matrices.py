@@ -5,6 +5,13 @@ import math
 import json
 import cv2
 
+# dubug usage
+# import debugpy
+
+# debugpy.listen(("0.0.0.0", 7860))
+# print("Waiting for client to attach...")
+# debugpy.wait_for_client()
+
 def psnr(img1, img2):
     mse = np.mean((img1 - img2) ** 2)
     if mse == 0:
@@ -32,6 +39,26 @@ def ssim(img1, img2):
     )
     return ssim_map.mean()
 
+def calculate_ssim(img1, img2):
+    """calculate SSIM
+    the same outputs as MATLAB's
+    img1, img2: [0, 255]
+    """
+    if not img1.shape == img2.shape:
+        raise ValueError("Input images must have the same dimensions.")
+    if img1.ndim == 2:
+        return ssim(img1, img2)
+    elif img1.ndim == 3:
+        if img1.shape[2] == 3:
+            ssims = []
+            for i in range(3):
+                ssims.append(ssim(img1, img2))
+            return np.array(ssims).mean()
+        elif img1.shape[2] == 1:
+            return ssim(np.squeeze(img1), np.squeeze(img2))
+    else:
+        raise ValueError("Wrong input image dimensions.")
+
 def calculate_lpips(img1, img2):
     # 加载预训练的LPIPS模型
     lpips_model = lpips.LPIPS(net="alex")
@@ -45,9 +72,9 @@ def calculate_lpips(img1, img2):
 
 def gen_txt_filename(name):
     global txt_psnr, txt_ssim, txt_lpips
-    txt_psnr = f"psnr_{name}.txt"
-    txt_ssim = f"ssim_{name}.txt"
-    txt_lpips = f"lpips_{name}.txt"
+    txt_psnr = f"psnr_{name}.txt" if not dddp_flag else f"psnr_{name}{dddp_testee}.txt"
+    txt_ssim = f"ssim_{name}.txt" if not dddp_flag else f"ssim_{name}{dddp_testee}.txt"
+    txt_lpips = f"lpips_{name}.txt" if not dddp_flag else f"lpips_{name}{dddp_testee}.txt"
 
 # BSD
 def bsd_loader():
@@ -85,7 +112,7 @@ def realblur_loader():
     
 # GOPRO
 def gopro_loader():
-    sample_path = "./output/GOPRO_Large_bothside_atten_fullsize_epoch65/test/"
+    sample_path = "./output/GOPRO_Large_augmented_512*512_epoch116/test/"
     gt_path_replace = "../datasets/GOPRO_Large/test/"
     json_path = '../datasets/GOPRO_Large/test/prompt.json'
 
@@ -101,33 +128,71 @@ def gopro_loader():
     
     return sample, gt
 
+# dddp
+def dddp_loader():
+    global dddp_flag, dddp_testee, dddp_indoor_list, dddp_outdoor_list
+    dddp_flag = True
+    dddp_testee = '_outdoor' # ['_indoor', '_outdoor', '']
+
+    dddp_indoor_list = np.load("../datasets/dd_dp_dataset_png/indoor_labels.npy").tolist()
+    dddp_outdoor_list = np.load("../datasets/dd_dp_dataset_png/outdoor_labels.npy").tolist()
+
+    sample_path = "./output/dd_dp_dataset_png_lock_randomrop_512*512*2_ssimloss5-5_epoch675/"
+    gt_path_replace = "../datasets/dd_dp_dataset_png/"
+    json_path = '../datasets/dd_dp_dataset_png/test_prompt.json'
+
+    gen_txt_filename(sample_path.split('/')[2])
+
+    with open(json_path, 'rt') as js:
+        js = json.load(js)
+        for data in js:
+            gt.append(data['target'])
+            sample.append(data['source'].replace(gt_path_replace, sample_path, 1))
+    
+    return sample, gt
+
 # init
 average_psnr, average_ssim, average_lpips = 0, 0, 0
 txt_psnr, txt_ssim, txt_lpips = '', '', ''
 sample, gt = [], []
-cnt = 0
+cnt, idx = 0, 0
 flags = {
-    'psnr' : False,
-    'ssim' : False,
+    'psnr' : True,
+    'ssim' : True,
     'lpips' : True
 }
+error = False
+dddp_flag = False
+dddp_testee = ''
+dddp_outdoor_list, dddp_indoor_list = [], []
 
 # get value
 # bsd_loader() # for bsd centroid only
 gopro_loader() # for gopro only
 # realblur_loader() # for realblur only
+# dddp_loader() # for dd_dp only
 
 # open file
-print(txt_psnr, txt_ssim)
 txt_psnr = open(txt_psnr, 'w') if flags['psnr'] else None
 txt_ssim = open(txt_ssim, 'w') if flags['ssim'] else None
 txt_lpips = open(txt_lpips, 'w') if flags['lpips'] else None
 
 for fname1, fname2 in zip(sample, gt):
-    
+
     img1 = cv2.imread(fname1)
     img2 = cv2.imread(fname2)
-    print(cnt, fname1, fname2)
+    idx += 1
+    if dddp_flag:
+        if dddp_testee == '_outdoor' and idx in dddp_indoor_list: continue
+        elif dddp_testee == '_indoor' and idx in dddp_outdoor_list: continue
+
+    print(idx, fname1, fname2)
+
+
+    # if error, flag error
+    # if img1.all() == None or img2.all() == None:
+    #     error = True
+    #     continue
     
     # if size different, resize
     if img1.shape != img2.shape:
@@ -158,14 +223,20 @@ print('finish!')
 
 if flags['psnr']:
     txt_psnr.write(f'avg psnr: {average_psnr / cnt}')
+    if error: txt_psnr.write('error !!!!!!!!!!!!!!!') 
     txt_psnr.close()
 
 if flags['ssim']:
     txt_ssim.write(f'avg ssim: {average_ssim / cnt}')
+    if error: txt_ssim.write('error !!!!!!!!!!!!!!!') 
     txt_ssim.close()
 
 if flags['lpips']:
     txt_lpips.write(f'avg lpips: {average_lpips / cnt}')
+    if error: txt_lpips.write('error !!!!!!!!!!!!!!!') 
     txt_lpips.close()
 
 print(f'psnr: {average_psnr / cnt}, ssim: {average_ssim / cnt}, lpips: {average_lpips / cnt}')
+if error: 
+    for i in range(30):
+        print('error !!!!!!!!!!!!!!!') 
